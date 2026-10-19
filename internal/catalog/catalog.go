@@ -747,7 +747,7 @@ func PricedBy(providers []string, id string) (Price, bool) {
 	if r, ok := unprofiled(b); ok {
 		b = r
 	}
-	for _, want := range []string{b, cutAt(b, '('), cutAt(b, ':')} {
+	for _, want := range []string{b, cutAt(b, '('), cutAt(b, ':'), afterTag(b)} {
 		for _, pid := range providers {
 			if key, ok := priceIndexOf(all, at, pid).bare[want]; ok {
 				return *all[pid].Models[key].Cost, true
@@ -769,8 +769,11 @@ func PricedBy(providers []string, id string) (Price, bool) {
 	// deepseek/deepseek-v4.1-flash, the id WorkBuddy and the relays serve it
 	// under, and lists no deepseek-v4.1-flash of its own (#1520). Only where
 	// nothing above priced it, so an id a vendor lists keeps its own price.
-	if pr, ok := canonicallyPriced(all, at, providers, b); ok {
-		return pr, true
+	// The canonical is asked of the id without a marker prefix (cn:) too.
+	for _, want := range []string{b, afterTag(b)} {
+		if pr, ok := canonicallyPriced(all, at, providers, want); ok {
+			return pr, true
+		}
 	}
 	// and a relay's rename of a model none of them lists as given
 	// (claude-deepseek-v4.1-flash[1M] is deepseek-v4.1-flash, #1383)
@@ -1130,7 +1133,10 @@ func lookup[T any](id string, table map[string]T) (T, bool) {
 
 // found is what table holds for a bare id: by the id itself, a Bedrock
 // profile's without its geography, "gpt-5.4(high)" (CLIProxyAPI's level in
-// the id) as gpt-5.4, or "glm-5:free" (":batch", ":thinking") as glm-5.
+// the id) as gpt-5.4, or "glm-5:free" (":batch", ":thinking") as glm-5. A
+// colon may hold a marker at the id's front rather than a tag at its end
+// (WorkBuddy's region ids, cn:glm-5.3-flash): what is behind it is tried
+// too, where the part before it names no model.
 func found[T any](b string, table map[string]T) (T, bool) {
 	if v, ok := table[b]; ok {
 		return v, true
@@ -1145,11 +1151,23 @@ func found[T any](b string, table map[string]T) (T, bool) {
 		b = b[:i]
 	}
 	if i := strings.IndexByte(b, ':'); i > 0 {
-		v, ok := table[b[:i]]
-		return v, ok
+		if v, ok := table[b[:i]]; ok {
+			return v, true
+		}
+		return found(b[i+1:], table)
 	}
 	var zero T
 	return zero, false
+}
+
+// afterTag is s past a colon tag: cn:glm-5.3-flash is glm-5.3-flash, a
+// marker at the id's front (WorkBuddy's region ids), as against glm-5:free,
+// whose tag sits at the end and whose front is the model. s without one.
+func afterTag(s string) string {
+	if i := strings.IndexByte(s, ':'); i > 0 {
+		return s[i+1:]
+	}
+	return s
 }
 
 // relayPrefixes are what relays put before a model's id to rename it, so
@@ -1278,7 +1296,7 @@ func listedBy(providers []string, id string, providerOverrides bool) ([]string, 
 	if r, ok := unprofiled(b); ok {
 		b = r
 	}
-	for _, want := range []string{b, cutAt(b, '('), cutAt(b, ':')} {
+	for _, want := range []string{b, cutAt(b, '('), cutAt(b, ':'), afterTag(b)} {
 		for _, pid := range providers {
 			for key, m := range all[pid].Models {
 				if bareID(key) != want {
@@ -1322,9 +1340,18 @@ func Unsuffixed(id string) (string, bool) {
 // offers its line's levels, not none. False when none of them has one.
 func KinEfforts(providers []string, id string) ([]string, bool) {
 	all := load()
-	shape, ok := versionless(bareID(id))
+	b := bareID(id)
+	shape, ok := versionless(b)
 	if !ok {
 		return nil, false
+	}
+	// a marker prefix in the id (cn:) is no version: the kin are the
+	// model's own line's (cn:deepseek-vX.Y-flash's from deepseek-vX.Y-flash's)
+	shapes := []string{shape}
+	if rest := afterTag(b); rest != b {
+		if s, ok := versionless(rest); ok {
+			shapes = append(shapes, s)
+		}
 	}
 	var (
 		levels             []string
@@ -1336,7 +1363,7 @@ func KinEfforts(providers []string, id string) ([]string, bool) {
 			if !m.Thinks && len(m.efforts("")) == 0 || m.budgeted() {
 				continue
 			}
-			if s, ok := versionless(bareID(key)); !ok || s != shape {
+			if s, ok := versionless(bareID(key)); !ok || !slices.Contains(shapes, s) {
 				continue
 			}
 			// the newest; of two the same day, the first provider's, then

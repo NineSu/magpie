@@ -38,11 +38,16 @@ const canonicalCatalog = `
 func TestPricedByCanonicalID(t *testing.T) {
 	writeCatalog(t, canonicalCatalog)
 
-	for _, id := range []string{"deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash", "DeepSeek-V4.1-Flash", "deepseek-v4-1-flash"} {
+	for _, id := range []string{"deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash", "DeepSeek-V4.1-Flash", "deepseek-v4-1-flash", "cn:deepseek-v4.1-flash"} {
 		p, ok := PricedBy([]string{"anthropic", "deepseek"}, id)
 		if !ok || p.Input != 0.15 || p.Output != 0.6 || p.CacheRead != 0.003 {
 			t.Errorf("PricedBy(%q) = %+v, %v, want deepseek-flash's 0.15/0.6/0.003", id, p, ok)
 		}
+	}
+	// a vendor listing the id as given prices it by that entry, the
+	// prefix (WorkBuddy's region ids) no bar
+	if p, ok := PricedBy([]string{"alibaba-cn"}, "cn:deepseek-v4.1-flash"); !ok || p.Input != 0.29754 {
+		t.Errorf("cn:deepseek-v4.1-flash = %+v, %v, want alibaba-cn's listed 0.29754", p, ok)
 	}
 	if p, ok := PricedBy([]string{"deepseek"}, "deepseek-v4-pro-0813"); !ok || p.Input != 0.66 {
 		t.Errorf("deepseek-v4-pro-0813 = %+v, %v, want deepseek-v4-pro's 0.66", p, ok)
